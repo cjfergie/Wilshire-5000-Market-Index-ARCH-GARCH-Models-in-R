@@ -1,0 +1,421 @@
+---
+title: "Wilshire 5000 ARMA GARCH Models"
+output: html_notebook
+---
+
+```{r}
+rm(list = ls())
+
+library("AER")
+library("ggplot2")
+library("sandwich")
+library("stargazer")
+library("survival")
+library("plm")
+library("margins")
+library("readxl")
+library("xts")
+library("dynlm")
+library("zoo")
+library("urca")
+library("strucchange")
+library("orcutt")
+library("fGarch")
+library("quantmod")
+library("tidyr")
+
+setwd("~/Econometrics/Testing SP500")
+
+```
+
+Loading Data from the Wilshire 5000 Stock Price Index Data
+
+```{r}
+
+w5000 <- read_excel(path = "W5000.xlsx")
+w5000
+```
+Transforming Columns
+```{r}
+
+w5000$Date <- as.Date(w5000$observation_date)
+w5000$WILL5000INDFC <- as.numeric(w5000$WILL5000INDFC)
+w5000 <- na.omit(w5000)
+
+```
+
+
+Computing Daily Percentage Changes using the Delt function from the package quantmod
+
+```{r}
+N <- length(w5000$WILL5000INDFC)
+w5000_pc_xts <- xts(100*Delt(w5000$WILL5000INDFC)[-1], w5000$Date[-N])
+
+```
+
+Setting up a list of dates to convert data into xts objects
+
+```{r}
+dates <- w5000$Date[-N]
+
+```
+
+
+```{r}
+#Plotting Percentage Changes
+plot(as.zoo(w5000_pc_xts),
+     ylab = "Percent", 
+     xlab = "Date", 
+     main = "Daily Percentage Changes \n Wilshire 5000 Stock Price Index", 
+     type = "l", 
+     col = "steelblue", 
+     lwd = 0.5,
+)
+
+#Adding horizontal line at y = 0
+
+
+```
+
+Fitting a model to our data, we specify the type of ARMA model to use to model 
+the values of the outcome and the type of GARCH to model conditional heteroskedasticity.
+
+Using ARMA (1,1) GARCH(1,0) model
+
+```{r}
+GARCH_Wilshire <- garchFit(~ arma(1,1) + garch(1,0), data = w5000_pc_xts, trace = F)
+summary(GARCH_Wilshire)
+
+
+```
+
+Considering model's predictions of actual value of percentage change
+
+```{r}
+w5000_pc_fitted_xts <- xts(GARCH_Wilshire@fitted, dates)
+
+#to view whats happening, narrowing in on one small time period: 2008-2009
+w5000_pc_2008to2009_xts <- w5000_pc_xts["2008::2009"]
+w5000_pc_fitted_2008to2009_xts <- w5000_pc_fitted_xts["2008::2009"]
+
+```
+
+Plotting percentage changes and model fitted values
+
+```{r}
+plot(as.zoo(w5000_pc_2008to2009_xts),
+     type = "l", 
+     col = "steelblue", 
+     ylab = "Percent", 
+     xlab = "Date", 
+     main = "ARMA(1,1), GARCH(1,0) \n Predicted Percent Change", 
+     lwd = 0.25)
+
+#adding most fitted values of percentage change to plot
+lines(as.zoo(w5000_pc_fitted_2008to2009_xts), 
+      col = "forestgreen", 
+      lwd = 1.5) ####Rework code
+
+legend("topright",
+       lty = c(1, 1),
+       lwd = c(0.2, 1),
+       cex = 0.8,
+       col = c("steelblue", "forestgreen"),
+       legend = c("Actual Percentage Change", "Predicted Percentage Change"))
+
+```
+
+Computing deviations of percentage changes from their mean
+
+```{r}
+demean_w5000_pc <- w5000_pc_xts - GARCH_Wilshire@fit$coef[1]
+
+```
+
+The demean_w5000_pc_pcsd time series indicates the mean estimated by our model, 
+plus the conditional standard error: this is our model fit of the 
+conditional standard error at a given time, based on other values
+
+```{r}
+demean_w5000_pc_pcsd <- GARCH_Wilshire@fit$coef[1] + GARCH_Wilshire@sigma.t
+
+```
+
+The demean_w5000_pc_mcsd time series indicates the mean estimated by our model, 
+minus the conditional standard error: this is our model fit of the 
+conditional standard error at a given time, based on other values
+
+```{r}
+demean_w5000_pc_mcsd <- GARCH_Wilshire@fit$coef[1] - GARCH_Wilshire@sigma.t
+
+```
+
+Together, the plus/minus one conditional standard error gives a confidence 
+interval for the predicted volatility of the time series.
+
+Converting these into xts objects:
+
+```{r}
+demean_w5000_pc_xts <- xts(demean_w5000_pc, dates)
+demean_w5000_pc_pcsd_xts <- xts(demean_w5000_pc_pcsd, dates)
+demean_w5000_pc_mcsd_xts <- xts(demean_w5000_pc_mcsd, dates)
+
+```
+
+Focusing on small time period: 2008 to 2009
+
+```{r}
+demean_w5000_pc_2008to2009 <- demean_w5000_pc_xts["2008::2009"]
+demean_w5000_pc_pcsd_2008to2009 <- demean_w5000_pc_pcsd_xts["2008::2009"]
+demean_w5000_pc_mcsd_2008to2009 <- demean_w5000_pc_mcsd_xts["2008::2009"]
+
+```
+
+Plotting deviation of percentage changes from mean
+
+```{r}
+plot(as.zoo(demean_w5000_pc_2008to2009), 
+     type = "l", 
+     col = "steelblue",
+     ylab = "Percent", 
+     xlab = "Date",
+     main = "ARMA(1,1)-GARCH(1,0) \n Estimated Bands of +- One Conditional Standard Deviation",
+     lwd = 0.2,
+     )
+# add horizontal line at y = 0
+#abline(0, 0)
+# add GARCH confidence bands (one standard deviation) to the plot
+lines(as.zoo(demean_w5000_pc_pcsd_2008to2009), 
+      col = "darkred", 
+      lwd = 0.5)
+lines(as.zoo(demean_w5000_PC_mcsd_2008to2009), 
+      col = "yellow", 
+      lwd = 0.5)
+legend("topright",
+       lty = c(1, 1),
+       lwd = c(0.5, 0.5),
+       cex = 0.7,
+       col = c("steelblue", "darkred"),
+       legend = c("Actual Percentage Change", "+/- Conditional Standard Deviation"))
+```
+
+Fitting a new model to the data specifying the type of ARMA model to be used and
+the GARCH model to be used to model conditional heteroskedasticity in the data
+
+```{r}
+
+GARCH_Wilshire_2 <- garchFit(~ arma(1,1) + garch(1,1), data = w5000_pc_xts, trace = F)
+summary(GARCH_Wilshire_2)
+
+```
+
+All coefficients under the error analysis are statistically significant at the 0.0001 level of significance.
+
+Predicting the actual value of percentage change:
+
+```{r}
+w5000_pc_fitted_xts_2 = xts(GARCH_Wilshire_2@fitted, dates)
+
+#focusing on the period 2008 to 2009
+
+w5000_pc_xts_2008to2009_2 <- w5000_pc_xts_2["2008::2009"]
+
+w5000_pc_fitted_xts_2008to2009_2 <- w5000_pc_fitted_xts_2["2008::2009"]
+```
+
+Plotting percentage changes 
+
+```{r}
+
+plot(as.zoo(w5000_pc_xts_2008to2009_2), 
+      type = "l", 
+      col = "steelblue",
+      ylab = "Percent", 
+      xlab = "Date",
+      main = "ARMA(1,1)-GARCH(1,1) \n Predicted Percentage Change",
+      lwd = 0.25)
+
+# add horizontal line at y = 0
+# abline(0, 0)
+# # add the model-fitted values of the percentage change to the plot:
+lines(as.zoo(w5000_pc_fitted_xts_2008to2009_2), 
+       col = "forestgreen", 
+       lwd = 1.5)
+legend("topright",
+        lty = c(1, 1),
+        lwd = c(0.2, 1),
+        cex = 0.8,
+        col = c("steelblue", "forestgreen"),
+        legend = c("Actual Percentage Change", "Predicted Percentage Change"))
+
+
+```
+
+Computing deviations of percentage changes from their mean:
+
+```{r}
+demean_w5000_2 <- w5000_pc_xts_2 - GARCH_Wilshire_2@fit$coef[1]
+
+
+```
+
+Also, estimating for mean and conditional standard error:
+
+The demean_W5000_pc_pcsd_2 time series indicates the mean estimated by our model, 
+plus the conditional standard error: this is our model fit of the 
+conditional standard error at a given time, based on other values.
+
+The demean_W5000_PC_Mcsd time series indicates the mean estimated by our model, 
+minus the conditional standard error: this is our model fit of the 
+conditional standard error at a given time, based on other values.
+
+Together, the plus/minus one conditional standard error gives a confidence 
+interval for the predicted volatility of the time series.
+
+```{r}
+demean_w5000_pc_pcsd_2 <- GARCH_Wilshire_2@fit$coef[1] + GARCH_Wilshire_2@sigma.t
+demean_w5000_pc_mcsd_2 <- GARCH_Wilshire_2@fit$coef[1] - GARCH_Wilshire_2@sigma.t
+```
+
+Converting these into xts objects:
+
+```{r}
+demean_w5000_xts_2 <- xts(demean_w5000_2, dates) 
+demean_w5000_pc_pcsd_xts_2 <- xts(demean_w5000_pc_pcsd_2, dates)
+demean_w5000_pc_mcsd_xts_2 <- xts(demean_w5000_pc_mcsd_2, dates)
+
+```
+
+Focusing on periods 2008 to 2009:
+
+```{r}
+demean_w5000_xts_2008to2009_2 <- demean_w5000_xts_2["2008::2009"]
+demean_w5000_pc_pcsd_xts_2008to2009_2 <- demean_w5000_pc_pcsd_xts_2["2008::2009"]
+demean_w5000_pc_mcsd_xts_2008to2009_2 <- demean_w5000_pc_mcsd_xts_2["2008::2009"]
+```
+
+Plotting for period 2008 to 2009:
+
+```{r}
+plot(as.zoo(demean_w5000_xts_2008to2009_2), 
+     type =  "l", 
+     col = "steelblue", 
+     ylab = "Percent", 
+     xlab = "Date", 
+     main = "ARMA(1,1), GARCH(1,1) \n Estimated Bands +- One Conditional Standard Deviation", 
+     lwd = 0.2)
+#abline(0, 0)
+lines(as.zoo(demean_w5000_pc_pcsd_xts_2008to2009_2), 
+      col = "darkred", 
+      lwd = 0.2)
+lines(as.zoo(demean_w5000_pc_mcsd_xts_2008to2009_2), 
+      col = "darkred", 
+      lwd = 0.2)
+legend("topright",
+       lty = c(1, 1),
+       lwd = c(0.5, 0.5),
+       cex = 0.7,
+       col = c("steelblue", "darkred"),
+       legend = c("Actual Percentage Change", "+/- Conditional Standard Deviation"))
+```
+Fitting an ARMA(3,3) to our model and GARCH(3,3) to for conditional heteroskedasticity 
+
+```{r}
+GARCH_Wilshire_3 <- garchFit(~ arma(3,3) + garch(3,3), data = w5000_pc_xts, trace = F)
+summary(GARCH_Wilshire_3)
+
+
+```
+
+Considering model predictions of the actual value of the percentage change 
+and focusing on the period of 2008 to 2009:
+
+```{r}
+w5000_pc_fitted_xts_3 <- xts(GARCH_Wilshire_3@fitted, dates)
+
+#focusing on 2008 to 2009
+
+w5000_pc_xts_2008to2009_3 <- w5000_pc_xts["2008::2009"]
+w5000_pc_fitted_xts_2008to2009_3 <- w5000_pc_fitted_xts_3["2008::2009"] 
+
+```
+
+Plotting percent changes and model fitted values:
+
+```{r}
+plot(as.zoo(w5000_pc_xts_2008to2009_3), 
+     type = "l", 
+     col = "steelblue", 
+     ylab = "Percent", 
+     xlab = "Date", 
+     main = "ARMA(3,3)-GARCH (3,3) \n Predicted Percentage Change", 
+     lwd = 0.25)
+abline(0,0)
+lines(as.zoo(w5000_pc_fitted_xts_2008to2009_3), 
+      col = "forestgree", 
+      lwd = 0.25)
+
+
+```
+
+Computing deviations from mean and conditional standard deviations
+
+```{r}
+demean_w5000_3 <- w5000_pc_xts - GARCH_Wilshire_3@fit$coef[1]
+demean_w5000_pc_pcsd_3 <- GARCH_Wilshire_3@fit$coef[1] + GARCH_Wilshire_3@sigma.t
+demean_w5000_pc_mcsd_3 <- GARCH_Wilshire_3@fit$coef[1] - GARCH_Wilshire_3@sigma.t
+
+```
+
+Making xts objects
+
+```{r}
+demean_w5000_3_xts <- xts(demean_w5000_3, dates)
+demean_w5000_pc_pcsd_3_xts <- xts(demean_w5000_pc_pcsd_3, dates)
+demean_w5000_pc_mcsd_3_xts <- xts(demean_w5000_pc_mcsd_3, dates)
+```
+
+Focusing on the period of 2008 to 2009:
+
+```{r}
+demean_w5000_3_2008to2009_xts <- demean_w5000_3_xts["2008::2009"]
+demean_w5000_pc_pcsd_3_2008to2009_xts <- demean_w5000_pc_pcsd_3_xts["2008::2009"]
+demean_w5000_pc_mcsd_3_2008to2009_xts <- demean_w5000_pc_mcsd_3_xts["2008::2009"]
+
+```
+
+Plotting percentage changes from mean:
+
+```{r}
+plot(as.zoo(demean_w5000_3_2008to2009_xts), 
+     type = "l", 
+     col = "steelblue", 
+     ylab = "Percent", 
+     xlab = "Date", 
+     main = "ARMA(3,3)-GARCH(3,3) \n Estimated BAnds of +- One Conditional Standard Deviation", 
+     lwd = 0.25)
+abline(0,0)
+lines(as.zoo(demean_w5000_pc_pcsd_3_2008to2009_xts), 
+      col = "darkred", 
+      lwd = 0.5)
+lines(as.zoo(demean_w5000_pc_mcsd_3_2008to2009_xts), 
+      col = "darkred", 
+      lwd = 0.5)
+legend("topright",
+       lty = c(1, 1),
+       lwd = c(0.5, 0.5),
+       cex = 0.7,
+       col = c("steelblue", "darkred"),
+       legend = c("Actual Percentage Change", "+/- Conditional Standard Deviation"))
+
+```
+
+
+
+
+
+
+
+
+
+
